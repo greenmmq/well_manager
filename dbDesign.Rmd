@@ -1,0 +1,293 @@
+---
+title: "Database Design and Queries"
+subtitle: "DSCI-532::Final Project 2"
+author: "Mark Green"
+date: "2/7/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+
+library(tidyverse)
+library(lubridate)
+library(RSQLite)
+library(DBI)
+```
+
+# Data Cleaning
+
+```{r}
+# read-in data, drop useless columns and null strings
+pdb <- read.csv('PDB_Deployments.csv', 
+                header=TRUE, na.strings = c('NA', 'NR', 'N/M', '')
+                ) %>%
+  select(-c(ID, X))
+
+# parse dates and convert to type text
+# sqlite does not support dates/times
+pdb$Deployment_Date <- as.character(parse_date_time(pdb$Deployment_Date, 'mdy'))
+pdb$Sample_Date <- as.character(parse_date_time(pdb$Sample_Date, 'mdy'))
+
+# preview
+head(pdb)
+```
+
+# Database Design
+
+```{r}
+# setup sqlite database
+conn <- dbConnect(RSQLite::SQLite(), dbname = "pdb_manager.db")
+```
+
+```{r}
+# write-in pdb table to database
+dbWriteTable(conn, 'original', pdb)
+```
+
+```{r}
+# CREATE statement for the locations table
+dbExecute(conn, 
+          "
+          CREATE TABLE locations (
+            'loc_id' INTEGER PRIMARY KEY AUTOINCREMENT,
+            'Site' TEXT NOT NULL,
+            'Location' TEXT NOT NULL
+          )
+          ")
+# INSERT statement for the locations table
+dbExecute(conn,
+          "
+          INSERT INTO locations (Site, Location)
+          SELECT DISTINCT Site, Location
+          FROM original
+          ORDER BY Site, Location
+          ")
+```
+
+```{r}
+# CREATE statement for intermediate table
+dbExecute(conn,
+          "
+          CREATE TABLE intermediate (
+            pdb_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loc_id INTEGER NOT NULL,
+            Deployment_Date DATE NULL,
+            Deployment_DTW_btoc NUMERIC NULL,
+            Sample_Date DATE NULL,
+            Sample_Depth_btoc TEXT NULL,
+            Sample_DTW_btoc TEXT NULL,
+            New_PDB TEXT NULL,
+            Notes TEXT NULL,         
+            FOREIGN KEY (loc_id)
+              REFERENCES locations (loc_id)
+          )
+          ")
+# CREATE statement for intermediate table
+dbExecute(conn,
+           "
+           INSERT INTO intermediate (
+             loc_id, 
+             Deployment_Date, 
+             Deployment_DTW_btoc,
+             Sample_Date,
+             Sample_Depth_btoc,
+             Sample_DTW_btoc,
+             New_PDB,
+             Notes
+           )
+           SELECT 
+	           l.loc_id, 
+	   	       o.Deployment_Date, 
+   		       o.Deployment_DTW_btoc,
+   		       o.Sample_Date,
+        	   o.Sample_Depth_btoc,
+        	   o.Sampling_DTW_btoc,
+        	   o.New_Bag_Deployed,
+       		   o.Notes
+           FROM original AS o
+           JOIN locations AS l
+           ON o.Site = l.Site AND o.Location = l.Location
+           ")
+```
+
+```{r}
+# CREATE statement for pdbs table
+dbExecute(conn,
+          "
+          CREATE TABLE pdbs (
+            pdb_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loc_id INTEGER NOT NULL,
+            Deployment_Date DATE NULL,
+            Deployment_DTW_btoc NUMERIC NULL,
+            FOREIGN KEY (loc_id)
+              REFERENCES locations (loc_id)
+          )
+          ")
+# INSERT statement for pdbs table
+dbExecute(conn,
+           "
+           INSERT INTO pdbs (
+             pdb_id,
+             loc_id,
+             Deployment_Date,
+             Deployment_DTW_btoc
+           )
+           SELECT 
+             pdb_id,
+             loc_id,
+             Deployment_Date,
+             Deployment_DTW_btoc
+           FROM intermediate
+           ")
+```
+
+```{r}
+# CREATE statement for samples table
+dbExecute(conn,
+          "
+          CREATE TABLE samples (
+            pdb_id INTEGER NOT NULL,
+            Sample_Date DATE NULL,
+            Sample_Depth_btoc TEXT NULL,
+            Sample_DTW_btoc TEXT NULL,
+            New_PDB TEXT NULL,
+            Notes TEXT NULL,
+            UNIQUE(pdb_id),
+            FOREIGN KEY (pdb_id)
+              REFERENCES pdbs (pdb_id)
+          )
+          ")
+# INSERT statement for samples table
+dbExecute(conn,
+           "
+           INSERT INTO samples (
+             pdb_id,
+             Sample_Date,
+             Sample_Depth_btoc,
+             Sample_DTW_btoc,
+             New_PDB,
+             Notes
+           )
+           SELECT 
+	           pdb_id, 
+	   	       Sample_Date,
+        	   Sample_Depth_btoc,
+        	   Sample_DTW_btoc,
+        	   New_PDB,
+       		   Notes
+           FROM intermediate
+           ")
+```
+
+```{r}
+# DROP statements for original and intermediate tables
+dbExecute(conn,"DROP TABLE IF EXISTS original")
+dbExecute(conn,"DROP TABLE IF EXISTS intermediate")
+
+dbListTables(conn)
+```
+
+# Queries
+
+```{r}
+# query to create a new well
+createWell = function(site, location){
+  dbExecute(conn,
+            "INSERT INTO locations (Site, Location) VALUES (?, ?)",
+            params=c(site, location)
+            )
+}
+```
+
+```{r}
+# query to deploy a PDB
+deployPDB = function(site, name, date, dtw){
+  # get the specified loc_id
+  locid = dbGetQuery(conn,
+                     "
+                     SELECT loc_id FROM locations WHERE Site = ? AND Location = ?
+                     ",
+                     params=c(site, name)
+                     )$loc_id
+  # insert deployment details into pdbs
+  dbExecute(conn,
+            "
+            INSERT INTO pdbs (loc_id, Deployment_Date, Deployment_DTW_btoc)
+            VALUES (?, ?, ?)
+            ",
+            params=c(locid, date, dtw)
+            )
+  # find the new pdb_id
+  max = dbGetQuery(conn, "SELECT MAX(pdb_id) AS 'max' FROM pdbs")$max
+  
+  # create a new sample associated to the pdb_id
+  dbExecute(conn,
+            "
+            INSERT INTO samples (pdb_id)
+            VALUES (?)
+            ",
+            params=c(max)
+            )
+} 
+```
+
+```{r}
+# query to collect a PDB
+collectPDB = function(site, name, date, dtw, depth, pdb, notes){
+  # finds max pdb_id not yet sampled at the given location 
+  pdbid = dbGetQuery(conn,
+                     "
+                     SELECT MAX(s.pdb_id) AS 'max'
+                     FROM pdbs AS p
+                       INNER JOIN (
+                         SELECT loc_id
+                         FROM locations
+                         WHERE Site = ? AND Location = ?
+                       ) AS l
+                       ON p.loc_id = l.loc_id
+                       INNER JOIN (
+                         SELECT pdb_id
+                         FROM samples
+                         WHERE Sample_Date IS NULL
+                       ) AS s
+                       ON p.pdb_id = s.pdb_id
+                     ",
+                     params=c(site, name)
+                     )$max
+  # update the sample associated with the pdbid queried above
+  dbExecute(conn, 
+            "
+            UPDATE samples
+            SET 
+              Sample_Date = ?, 
+              Sample_DTW_btoc = ?,
+              Sample_Depth_btoc = ?, 
+              New_PDB = ?,
+              Notes = ?
+            WHERE pdb_id = ?;
+            ",
+            params=c(date, dtw, depth, pdb, notes, pdbid)
+            )
+  # redeploy a new pdb if appropriate
+  if (pdb == "Y") {
+    deployPDB(site, name, date, dtw)
+  }
+}
+```
+
+TODO:
+
+- add more queries for viewing the data
+
+
+
+
+
+
+
+
+
