@@ -2,3 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
+pdb_manager.db
+pdb_manager.db-journal
