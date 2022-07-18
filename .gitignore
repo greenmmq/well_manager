@@ -4,11 +4,9 @@
 .Ruserdata
 pdb_manager.db
 pdb_manager.db-journal
-<<<<<<< HEAD
 well_manager.Rproj
 dbDesign.Rmd
+appDesign.Rmd
 FinalProject2_dsci-532-markgreen.pdf
-PDB_Deployments
-=======
+PDB_Deployments.csv
 login_tester
->>>>>>> 7e539ff (application with login page)
