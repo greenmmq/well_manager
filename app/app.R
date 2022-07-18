@@ -4,6 +4,7 @@
 #
 
 library(shiny)
+library(shinyauthr)
 library(RSQLite)
 library(DBI)
 library(tidyr)
@@ -12,6 +13,155 @@ library(ggplot2)
 
 # connect to pre-built SQLite database
 conn <- dbConnect(RSQLite::SQLite(), dbname = "pdb_manager.db")
+
+### Shiny WebApp ###
+
+loc <- dbGetQuery(conn, "SELECT * FROM locations")
+
+ui <- fluidPage(
+  # add login panel UI function
+  shinyauthr::loginUI(id = "login"),
+  
+  # navigation bar
+  uiOutput("navbar"),
+  
+  # add logout button UI
+  div(class = "pull-right", shinyauthr::logoutUI(id = "logout"))
+)
+
+# Define server logic required to draw a histogram
+server <- function(input, output, server) {
+  
+  # call login module supplying data frame, 
+  # user and password cols and reactive trigger
+  credentials <- shinyauthr::loginServer(
+    id = "login",
+    data = data.frame(dbGetQuery(conn, "SELECT * FROM users")),
+    user_col = user,
+    pwd_col = password,
+    log_out = reactive(logout_init())
+  )
+  
+  # call the logout module with reactive trigger to hide/show
+  logout_init <- shinyauthr::logoutServer(
+    id = "logout",
+    active = reactive(credentials()$user_auth)
+  )
+  
+  observeEvent(input$site != "All", {
+    updateSelectInput(inputId = "location",
+                      choices = c("All",
+                                  unique(loc$Location[loc$Site == input$site])
+                                  )
+                      )
+  })
+  
+  query_table <- reactive ({
+    if (input$site == "All" & input$location == "All") {
+      if (input$datetype == "Deployment Date") {
+        table <- selectAllDeployedRange(
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      } else {
+        table <- selectAllSampledRange(
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      }
+    } else if (input$site != "All" & input$location == "All") {
+      if (input$datetype == "Deployment Date") {
+        table <- selectSiteDeployedRange(
+          site = input$site,
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      } else {
+        table <- selectSiteSampledRange(
+          site = input$site,
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      } 
+    } else {
+      if (input$datetype == "Deployment Date") {
+        table <- selectLocationDeployedRange(
+          name = input$location,
+          site = input$site,
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      } else {
+        table <- selectLocationSampledRange(
+          name = input$location,
+          site = input$site,
+          after = as.character(input$daterange[1]), 
+          before = as.character(input$daterange[2])
+        )
+      }
+    }
+  })
+  
+  output$homepage <- renderUI({
+    req(credentials()$user_auth)
+    tags$h1("Something in the homepage")
+  })
+  
+  output$query <- renderTable({
+    req(credentials()$user_auth)
+    query_table()
+  })
+  
+  output$navbar <- renderUI({
+    req(credentials()$user_auth)
+    tagList(
+      navbarPage(
+        id = "tabs",
+        title = "PDB-Manager",
+        tabPanel("Home", 
+                 loginUI("login"), 
+                 uiOutput("homepage")
+        ),
+        tabPanel("Queries",
+                 sidebarLayout(
+                   sidebarPanel(
+                     selectInput("site", 
+                                 "Select Site:", 
+                                 choices = c("All", unique(loc$Site)),
+                                 selected = "All"
+                     ),
+                     selectInput("location", 
+                                 "Select Location:", 
+                                 choices = c("All", unique(loc$Location)),
+                                 selected = "All"
+                     ),
+                     radioButtons("datetype", 
+                                  "Date Range Filters on:",
+                                  choices = c("Deployment Date", "Sample Date"),
+                                  selected = "Deployment Date"
+                     ),
+                     dateRangeInput("daterange",
+                                    "Select Date Range:",
+                                    start = "2010-01-01",
+                                    end = "2022-01-01",
+                                    min = "2000-01-01",
+                                    max = "2040-01-01",
+                                    format = "yyyy-mm-dd",
+                                    separator = " to "
+                     )
+                   ),
+                   
+                   mainPanel(
+                     tableOutput("query")
+                   )
+                 )
+        )
+      )
+    )
+  })
+}
+
+
 
 ### Database Function List ###
 
@@ -164,7 +314,7 @@ selectAllDeployedRange =
                ",
                params=c(after, before)
     )
-}
+  }
 
 # query to view all data sampled between date range
 selectAllSampledRange = 
@@ -192,7 +342,7 @@ selectAllSampledRange =
                ",
                params=c(after, before)
     )
-}
+  }
 
 # query to view all data from one site deployed between date range
 selectSiteDeployedRange = 
@@ -221,7 +371,7 @@ selectSiteDeployedRange =
                ",
                params=c(site, after, before)
     )
-}
+  }
 
 # query to view all data from one site sampled between date range
 selectSiteSampledRange = function(site, after='2000-01-01', before='2040-01-01'){
@@ -278,7 +428,7 @@ selectLocationDeployedRange =
                ",
                params=c(site, name, after, before)
     )
-}
+  }
 
 # query to view all data from one location sampled between date range
 selectLocationSampledRange = 
@@ -307,115 +457,9 @@ selectLocationSampledRange =
                ",
                params=c(site, name, after, before)
     )
-}
+  }
 
-### Shiny WebApp ###
 
-loc <- dbGetQuery(conn, "SELECT * FROM locations")
 
-# Define UI for application that draws a histogram
-ui <- fluidPage(
-  navbarPage("PDB-Manager",
-    tabPanel("Queries",
-      # Sidebar with a slider input for number of bins 
-      sidebarLayout(
-          sidebarPanel(
-              selectInput("site", 
-                          "Select Site:", 
-                          choices = c("All", unique(loc$Site)),
-                          selected = "All"
-                          ),
-              selectInput("location", 
-                          "Select Location:", 
-                          choices = c("All", unique(loc$Location)),
-                          selected = "All"
-                          ),
-              radioButtons("datetype", 
-                           "Date Range Filters on:",
-                           choices = c("Deployment Date", "Sample Date"),
-                           selected = "Deployment Date"
-                           ),
-              dateRangeInput("daterange",
-                             "Select Date Range:",
-                             start = "2010-01-01",
-                             end = "2022-01-01",
-                             min = "2000-01-01",
-                             max = "2040-01-01",
-                             format = "yyyy-mm-dd",
-                             separator = " to "
-                             )
-          ),
-  
-          # Show a plot of the generated distribution
-          mainPanel(
-             tableOutput("query")
-          )
-      )
-    )
-  )
-)
-
-# Define server logic required to draw a histogram
-server <- function(input, output) {
-      
-    observeEvent(input$site != "All", {
-      updateSelectInput(inputId = "location",
-                        choices = c("All", 
-                                    unique(loc$Location[loc$Site == input$site])
-                                    )
-                        )
-    })
-  
-    query_table <- reactive ({
-      if (input$site == "All" & input$location == "All") {
-        if (input$datetype == "Deployment Date") {
-          table <- selectAllDeployedRange(
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        } else {
-          table <- selectAllSampledRange(
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        }
-      } else if (input$site != "All" & input$location == "All") {
-        if (input$datetype == "Deployment Date") {
-          table <- selectSiteDeployedRange(
-            site = input$site,
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        } else {
-          table <- selectSiteSampledRange(
-            site = input$site,
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        } 
-      } else {
-        if (input$datetype == "Deployment Date") {
-          table <- selectLocationDeployedRange(
-            name = input$location,
-            site = input$site,
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        } else {
-          table <- selectLocationSampledRange(
-            name = input$location,
-            site = input$site,
-            after = as.character(input$daterange[1]), 
-            before = as.character(input$daterange[2])
-          )
-        }
-      }
-    })
-  
-    output$query <- renderTable({
-      query_table()
-    })
-}
-
-# Run the application 
+### Run the application ###
 shinyApp(ui = ui, server = server)

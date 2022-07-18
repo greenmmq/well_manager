@@ -1,0 +1,91 @@
+---
+title: "PDB Manager Application Design"
+subtitle: "DSCI-532::Final Project 3"
+author: "Mark Green"
+date: "7/17/2022"
+output:
+  html_document: 
+    toc: true
+  pdf_document: 
+    toc: true
+---
+
+```{r setup, include=TRUE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+
+library(tidyverse)
+library(lubridate)
+library(RSQLite)
+library(DBI)
+```
+
+\newpage
+
+# Introduction
+
+Passive Diffusion Bag (PDB) sampling is becoming a more common practice for long-term groundwater monitoring sites in the environmental industry due to it's potential cost-savings for sites with volatile organic compounds (VOC) as the contaminants-of-concern (COC). However, current methods (manually updated excel spreadsheets...) for managing PDB deployments and sampling can be cumbersome for operations teams. The *PDB Manager* web application aims to solve this issue by providing an user interface for recording PDB deployment/sampling information and efficiently tracking and querying these data from a database. 
+
+Previously, the database design was discussed in detail from the transformation of the original dataset to the development of SQL statements for performing CREATE, READ, and UPDATE operations on the database in accordance with the PDB deployment/sampling model. This report was comprehensive for the most critical functionality of the web application, although a couple other features are planned including:
+
+- Analyzing existing database to determine which wells currently have PDBs deployed to them, and applying the `deployPDB()` function as necessary to accurately reflect this in the database. 
+- Adding functionality to existing queries to allow filtering on wells with/without PDBs currently deployed. 
+- Adding feature to allow assignment of lot numbers in batch by date range.
+    + additional table for lot number assignment by date range
+    + modify read queries to join lot numbers
+
+The optional features may or may not be added by the end of this project. In either case, they will not be documented further in this report. 
+
+This report discusses the web application architecture and layout for the *PDB Manager* application in the sections below. 
+
+\newpage
+
+# Section 1: Web Application Architecture
+
+## MVC Design
+
+> A typical web application follows a MVC schema.
+> 
+> - **Model**: The backend that contains all the data logic
+> - **View**: The frontend or graphical user interface (GUI)
+> - **Controller**: The brains of the application that controls how data is displayed
+>
+> -Final Project part 3 description
+>
+
+The *PDB Manager* architecture follows the MVC design as specified above. In this case, the **Model** is a SQLite database. This is where the database is stored, and SQL is used to Create, Read, and Update data as necessary. 
+
+Next, the **Controller** is the RShiny application *server* script. The server script handles the interactions between R input variables and the SQLite database using the `RSQLite` and `DBI` packages. 
+
+Finally, the **Viewer** is the RShiny application *ui* script. The ui script routes maps the user interface to input variables for the server, and renders messages and objects (tables) as specified by the server. The ui script also governs the overall front-end layout and appearance of the user interface, and incorporates other web elements (css, html, images, etc.) as necessary. 
+
+A diagram of the application architecture is shown below:
+
+![Figure 1. PDB-Manager web application architecture with MVC designation](RShiny_appdiagram_mvc.png)
+
+## Access and Interactivity
+
+These three MVC components, and any supporting objects, are hosted for free on RShiny Server using https://shinyapps.io/. Access to the application will be provided by the `shinyauthr` [package](https://paul.rbind.io/shinyauthr/). When the user provides an acceptable username/password then access to the application functions will be provided. The general interactivity for the user will include the ability to input and select data, as well as view tables. 
+
+# Section 2: Web Application Layout
+
+
+
+# Section 3: Work Assessment
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
