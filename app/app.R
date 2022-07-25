@@ -4,6 +4,7 @@
 #
 
 library(DBI)
+library(DT)
 library(dplyr)
 library(RSQLite)
 library(shiny)
@@ -267,10 +268,24 @@ server <- function(input, output, server) {
     })
   
   # renders the Query table reactive results
-  output$query <- renderTable({
-    req(credentials()$user_auth)
+  output$query <- DT::renderDT(
     query_table()
-  })
+    # options = list(paging = TRUE,    ## paginate the output
+    #                pageLength = 15,  ## number of rows to output for each page
+    #                scrollX = TRUE,   ## enable scrolling on X axis
+    #                scrollY = TRUE,   ## enable scrolling on Y axis
+    #                autoWidth = TRUE, ## use smart column width handling
+    #                server = FALSE,   ## use client-side processing
+    #                dom = 'Bfrtip',
+    #                buttons = c('csv', 'excel'),
+    #                columnDefs = list(list(targets = '_all', className = 'dt-center'),
+    #                                  list(targets = c(0, 8, 9), visible = FALSE))
+    # )
+    # extensions = 'Buttons'
+    # selection = 'single' ## enable selection of a single row
+    # filter = 'bottom'              ## include column filters at the bottom
+    # rownames = FALSE                ## don't show row numbers/names
+  )
   
   # renders the navbar, requiring the loginUI
   output$navbar <- renderUI({
@@ -330,7 +345,7 @@ server <- function(input, output, server) {
             ),
             # query table output
             mainPanel(
-              tableOutput("query")
+              DT::dataTableOutput("query")
             )
           )
         ),
