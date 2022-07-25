@@ -3,34 +3,20 @@
 # ... on groundwater monitoring networks. 
 #
 
+library(DBI)
+library(dplyr)
+library(RSQLite)
 library(shiny)
 library(shinyauthr)
-library(RSQLite)
-library(DBI)
 library(tidyr)
-library(dplyr)
-library(ggplot2)
+
 
 # connect to pre-built SQLite database
 conn <- dbConnect(RSQLite::SQLite(), dbname = "pdb_manager.db")
 
-# reactive db query re-exeecution trigger
-# https://www.r-bloggers.com/2020/08/shiny-in-production-app-and-database-syncing/
-makereactivetrigger <- function() {
-  rv <- reactiveValues(a = 0)
-  list(
-    depend = function() {
-      rv$a
-      invisible()
-    },
-    trigger = function() {
-      rv$a <- isolate(rv$a + 1)
-    }
-  )
-}
-dbtrigger <- makereactivetrigger()
 
 ### Shiny WebApp ###
+
 
 ## UI Script ##
 
@@ -71,28 +57,33 @@ server <- function(input, output, server) {
   # listen for query inputs set to "All" and change choices as necessary
   observeEvent(input$site != "All", {
     dbtrigger$depend()
-    updateSelectInput(inputId = "location",
-                      choices = c("All",
-                                  unique(loc()$Location[loc()$Site == input$site])
-                                  )
-                      )
+    updateSelectInput(
+      inputId = "location",
+      choices = c(
+        "All",
+        unique(loc()$Location[loc()$Site == input$site]
+        )
+      )
+    )
   })
   
   # change deploy PDB site/location dropdowns to only include wells without pdbs
   observeEvent(input$dpSite, {
     dbtrigger$depend()
     site.no.pdb = filter(no_pdb(), Site == input$dpSite)
-    updateSelectInput(inputId = "dpLocation",
-                      choices = site.no.pdb$Location
-                      )
+    updateSelectInput(
+      inputId = "dpLocation",
+      choices = site.no.pdb$Location
+    )
   })
   
   # change collect sample site/location dropdowns to only include wells with pdbs
   observeEvent(input$csSite, {
     dbtrigger$depend()
     site.has.pdb = filter(has_pdb(), Site == input$csSite)
-    updateSelectInput(inputId = "csLocation",
-                      choices = site.has.pdb$Location
+    updateSelectInput(
+      inputId = "csLocation",
+      choices = site.has.pdb$Location
     )
   })
   
@@ -149,7 +140,7 @@ server <- function(input, output, server) {
   has_pdb <- reactive({
     dbtrigger$depend() 
     dbGetQuery(
-      conn,
+               conn,
                "
                -- gets only wells where Sample_Date is NULL AKA w/ PDB
                SELECT l.Site, l.Location
@@ -211,6 +202,8 @@ server <- function(input, output, server) {
   
   # reactive filtering for Query table
   query_table <- reactive ({
+    dbtrigger$depend()
+    # conditional logic to filter on inputs
     if (input$site == "All" & input$location == "All") {
       if (input$datetype == "Deployment Date") {
         table <- selectAllDeployedRange(
@@ -254,6 +247,14 @@ server <- function(input, output, server) {
         )
       }
     }
+    # conditional logic to subset query by pdb status
+    if (input$pdbstatus == 1) {
+      table
+    } else if (input$pdbstatus == 2) {
+      pdbSubsetter(table, has_pdb())
+    } else if (input$pdbstatus == 3) {
+      pdbSubsetter(table, no_pdb())
+    }
   })
   
   ## OUTPUTS ##
@@ -261,8 +262,9 @@ server <- function(input, output, server) {
   # homepage UI
   output$homepage <- renderUI({
     req(credentials()$user_auth)
-    tags$h4("Welcome to the PDB Manager. This application is designed to help field teams track and manage PDBs in groundwater monitoring wells.")
-  })
+    tags$h4("Welcome to the PDB Manager! 
+            This application is designed to help field teams track and manage PDBs in groundwater monitoring wells.")
+    })
   
   # renders the Query table reactive results
   output$query <- renderTable({
@@ -277,15 +279,16 @@ server <- function(input, output, server) {
       navbarPage(
         id = "tabs",
         title = "PDB-Manager",
-        tabPanel("Home", 
-                 loginUI("login"), 
-                 uiOutput("homepage")
+        tabPanel(
+          "Home", 
+          loginUI("login"), 
+          uiOutput("homepage")    
         ),
         # sidebar panel layout for the table queries
-        tabPanel("Queries",
+        tabPanel("Explore",
           sidebarLayout(
             sidebarPanel(
-              tags$h3("Use this page to query PDB information from the database."),
+              tags$h3("Use this page to explore PDB deployment and sampling information."),
               selectInput(
                 "site", 
                 "Select Site:", 
@@ -308,11 +311,21 @@ server <- function(input, output, server) {
                 "daterange",
                 "Select Date Range:",
                 start = "2010-01-01",
-                end = "2022-01-01",
+                end = "2023-01-01",
                 min = "2000-01-01",
                 max = "2040-01-01",
                 format = "yyyy-mm-dd",
                 separator = " to "
+              ),
+              radioButtons(
+                "pdbstatus", 
+                "Subeset selection by:",
+                choiceNames = list(
+                  "All Wells",
+                  "Deployed PDBs Only", 
+                  "Last Sample from Wells without a PDB Deployed"
+                ),
+                choiceValues = list(1, 2, 3)
               )
             ),
             # query table output
@@ -333,8 +346,11 @@ server <- function(input, output, server) {
           tags$h3(
             "Use this page to record when a PDB is deployed to a well."
           ),
-          tags$h4(
-            "NOTE - Record the depths in units of feet below-top-of-casing (ft btoc)"
+          tags$h5(
+            "NOTE 1. Record the depths in units of feet below-top-of-casing (ft btoc)."
+          ),
+          tags$h5(
+            "NOTE 2. Only available for selection are sites and wells without a PDB currently deployed."
           ),
           selectInput(
             "dpSite", 
@@ -362,8 +378,11 @@ server <- function(input, output, server) {
           tags$h3(
             "Use this page to record when a PDB is collected from a well and sampled."
           ),
-          tags$h4(
-            "NOTE - Record the depths in units of feet below-top-of-casing (ft btoc)"
+          tags$h5(
+            "NOTE 1. Record the depths in units of feet below-top-of-casing (ft btoc)."
+          ),
+          tags$h5(
+            "NOTE 2. Only available for selection are sites and wells with a PDB currently deployed."
           ),
           selectInput(
             "csSite", 
@@ -403,8 +422,8 @@ server <- function(input, output, server) {
 }
 
 
+### DATABASE CRU FUNCTIONS ###
 
-### Database Function List ###
 
 # query to create a new well
 createWell = function(site, name){
@@ -457,6 +476,7 @@ deployPDB = function(site, name, date, dtw){
                       ",
                       params=c(locid)
   )$status
+  
   # if a pdb exists, error message and end function
   # indicate pdb_id and deployment date of existing well to user
   if (!is.na(status)) {
@@ -501,7 +521,7 @@ deployPDB = function(site, name, date, dtw){
 }
 
 # query to collect a PDB
-collectPDB = function(site, name, date, dtw, depth, pdb, notes){
+collectPDB = function(site, name, date, dtw, depth, pdb, notes) {
   # finds max pdb_id not yet sampled at the given location 
   pdbid = dbGetQuery(conn,
                      "
@@ -639,32 +659,33 @@ selectSiteDeployedRange =
   }
 
 # query to view all data from one site sampled between date range
-selectSiteSampledRange = function(site, after='2000-01-01', before='2040-01-01'){
-  dbGetQuery(conn,
-             "
-             SELECT 
-               l.Site, l.Location, p.Deployment_Date, p.Deployment_DTW_btoc,
-               s.Sample_Date, s.Sample_DTW_btoc, s.Sample_Depth_btoc, 
-               s.New_PDB, s.Notes
-             FROM pdbs AS p
-               INNER JOIN (
-                 SELECT *
-                 FROM locations
-                 WHERE Site = ?
-               ) AS l
-               ON p.loc_id = l.loc_id
-               INNER JOIN (
-                 SELECT *
-                 FROM samples
-               ) AS s
-               ON p.pdb_id = s.pdb_id
-             WHERE DATE(s.Sample_Date) >= DATE(?) 
-               AND DATE(s.Sample_Date) < DATE(?)
-             ORDER BY Site, Location, DATE(s.Sample_Date) DESC
-             ",
-             params=c(site, after, before)
-  )
-}
+selectSiteSampledRange = 
+  function(site, after='2000-01-01', before='2040-01-01'){
+    dbGetQuery(conn,
+               "
+               SELECT 
+                 l.Site, l.Location, p.Deployment_Date, p.Deployment_DTW_btoc,
+                 s.Sample_Date, s.Sample_DTW_btoc, s.Sample_Depth_btoc, 
+                 s.New_PDB, s.Notes
+               FROM pdbs AS p
+                 INNER JOIN (
+                   SELECT *
+                   FROM locations
+                   WHERE Site = ?
+                 ) AS l
+                 ON p.loc_id = l.loc_id
+                 INNER JOIN (
+                   SELECT *
+                   FROM samples
+                 ) AS s
+                 ON p.pdb_id = s.pdb_id
+               WHERE DATE(s.Sample_Date) >= DATE(?) 
+                 AND DATE(s.Sample_Date) < DATE(?)
+               ORDER BY Site, Location, DATE(s.Sample_Date) DESC
+               ",
+               params=c(site, after, before)
+    )
+  }
 
 # query to view all data from one location deployed between date range
 selectLocationDeployedRange = 
@@ -725,6 +746,50 @@ selectLocationSampledRange =
   }
 
 
+### SUPPORTING FUNCTIONS ###
+
+
+# function to subset the query table on wells w/ or w/o PDBs
+# ... based on reactive_table input
+pdbSubsetter = function(table, reactive_table) {
+  # get the max deployment_date only on wells in reactive_table
+  filter.table <- 
+    inner_join(table, reactive_table, 
+      by = c("Site"="Site", "Location"="Location")
+    ) %>%
+    group_by(Site, Location) %>%
+    summarise(Deployment_Date= max(Deployment_Date)) %>%
+    ungroup() 
+  # rejoin the rest of the query data to remaining pdb deployments
+  new.table <- 
+    inner_join(table, filter.table,
+      by = c(
+        "Site"="Site", 
+        "Location"="Location", 
+        "Deployment_Date"="Deployment_Date" 
+      )
+    )
+  return(new.table)
+}
+
+# reactive db query re-exeecution trigger
+# https://www.r-bloggers.com/2020/08/shiny-in-production-app-and-database-syncing/
+makereactivetrigger <- function() {
+  rv <- reactiveValues(a = 0)
+  list(
+    depend = function() {
+      rv$a
+      invisible()
+    },
+    trigger = function() {
+      rv$a <- isolate(rv$a + 1)
+    }
+  )
+}
+dbtrigger <- makereactivetrigger()
+
 
 ### Run the application ###
+
 shinyApp(ui = ui, server = server)
+
